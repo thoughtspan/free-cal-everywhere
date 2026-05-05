@@ -1,0 +1,21 @@
+owner_name:  Jeremy Klar
+owner_email: you@gmail.com
+calendar_id: you@gmail.com        # calendar to read availability from and write bookings to
+timezone:    America/New_York     # IANA timezone name
+
+description: "30-minute intro call. Pick a time that works for you."  # optional
+
+meeting_duration_minutes: 30
+buffer_minutes: 15                # gap blocked before/after each meeting
+lookahead_days: 14
+
+working_hours:
+  monday:    { start: "09:00", end: "18:00" }
+  tuesday:   { start: "09:00", end: "18:00" }
+  wednesday: { start: "09:00", end: "18:00" }
+  thursday:  { start: "09:00", end: "18:00" }
+  friday:    { start: "09:00", end: "17:00" }
+  # saturday / sunday: omit to block them
+
+meeting_title: "Meeting with {name}"
+confirmation_message: "Looking forward to connecting. I'll send a video link separately."
