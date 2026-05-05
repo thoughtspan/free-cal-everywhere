@@ -70,7 +70,9 @@ def get_db():
     return db
 
 def is_authenticated(db) -> bool:
-    return db.execute("SELECT 1 FROM google_tokens LIMIT 1").fetchone() is not None
+    has_db  = db.execute("SELECT 1 FROM google_tokens LIMIT 1").fetchone() is not None
+    has_env = bool(os.environ.get('GOOGLE_TOKEN'))
+    return has_db or has_env
 
 def slot_taken(db, slot: datetime) -> bool:
     return db.execute(

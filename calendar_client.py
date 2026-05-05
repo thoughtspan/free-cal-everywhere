@@ -19,14 +19,23 @@ SCOPES = [
 
 
 def creds_from_db(db) -> Credentials:
+    # Prefer DB (set after web OAuth flow); fall back to GOOGLE_TOKEN env var
+    # (set by setup.py via .env or Fly secrets).
     row = db.execute("SELECT token_json FROM google_tokens LIMIT 1").fetchone()
-    if not row:
-        raise RuntimeError("Not authenticated — visit /auth/login")
-    creds = Credentials.from_authorized_user_info(json.loads(row[0]), SCOPES)
+    token_json = row[0] if row else os.environ.get('GOOGLE_TOKEN')
+    if not token_json:
+        raise RuntimeError("Not authenticated — run setup.py or visit /auth/login")
+    creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        db.execute("UPDATE google_tokens SET token_json=?",
-                   (creds_to_json(creds),))
+        refreshed = creds_to_json(creds)
+        if row:
+            db.execute("UPDATE google_tokens SET token_json=?", (refreshed,))
+        else:
+            db.execute(
+                "INSERT INTO google_tokens (token_json, updated_at) VALUES (?,?)",
+                (refreshed, __import__('datetime').datetime.utcnow().isoformat())
+            )
         db.commit()
     return creds
 
