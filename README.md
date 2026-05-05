@@ -105,13 +105,13 @@ Restart `run.py` after changes.
 
 ## Deployment
 
-### Render (free, always on)
+### Railway (free tier, always on)
 
-`setup.py` handles this — choose **Render** when prompted. It writes `render.yaml`
-and `render-secrets.txt`, then walks you through connecting your GitHub repo at
-[render.com](https://render.com).
+`setup.py` handles this entirely — choose **Railway** when prompted. It installs
+the Railway CLI, logs you in via browser, creates the project, uploads your secrets,
+and deploys. No manual steps.
 
-Your booking page will be live at `https://free-cal-everywhere.onrender.com`.
+Your booking page will be live at `https://free-cal-everywhere.up.railway.app`.
 
 ### Railway / Render / any Docker host
 

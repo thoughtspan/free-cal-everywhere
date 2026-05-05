@@ -238,78 +238,79 @@ def do_host(token_data):
     print()
 
     choice = ask_choice("", [
-        ("Render",       "free tier, always on, real URL — connect your GitHub repo"),
+        ("Railway",      "free $5/mo credit, always on, real URL — fully terminal"),
         ("Run locally",  "starts on localhost — share via a free tunnel"),
     ], default=1)
 
     if choice == 1:
-        deploy_render(token_data)
+        deploy_railway(token_data)
     else:
         run_local()
 
-# ── Render deployment ─────────────────────────────────────────────────────────
+# ── Railway deployment ────────────────────────────────────────────────────────
 
-def deploy_render(token_data):
+def deploy_railway(token_data):
     print()
 
+    # Install Railway CLI if missing
+    if not cmd_exists("railway"):
+        info("Installing Railway CLI...")
+        if platform.system() == "Darwin":
+            if cmd_exists("brew"):
+                run_or_die(["brew", "install", "railway"], "Failed to install Railway via brew")
+            else:
+                run_or_die(["sh", "-c", "curl -fsSL https://railway.app/install.sh | sh"],
+                           "Failed to install Railway CLI")
+        else:
+            run_or_die(["sh", "-c", "curl -fsSL https://railway.app/install.sh | sh"],
+                       "Failed to install Railway CLI")
+        ok("Railway CLI installed")
+
+    # Write Procfile so Railway knows the start command
+    with open("Procfile", "w") as f:
+        f.write("web: python run.py\n")
+
+    print()
+    info("Opening Railway login (browser will open)...")
+    run_or_die(["railway", "login"], "Railway login failed")
+    print()
+
+    # Create project
+    info("Creating Railway project...")
+    result = run(["railway", "init", "--name", "free-cal-everywhere"],
+                 capture_output=True, text=True)
+    if result.returncode != 0:
+        # May already be linked; try linking to existing or continue
+        run(["railway", "init"], capture_output=True)
+
+    # Set environment variables in one call
     admin_secret = os.urandom(12).hex()
-
-    # Write render.yaml
-    render_yaml = f"""services:
-  - type: web
-    name: free-cal-everywhere
-    runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python run.py
-    envVars:
-      - key: GOOGLE_TOKEN
-        value: {json.dumps(json.dumps(token_data))}
-      - key: ADMIN_SECRET
-        value: {admin_secret}
-      - key: CONFIG_YAML
-        value: ""
-"""
-    # CONFIG_YAML is easier to set in the dashboard; write it to a note instead
     with open("config.yaml") as f:
-        cfg_contents = f.read()
+        cfg_yaml = f.read()
 
-    render_yaml_clean = """services:
-  - type: web
-    name: free-cal-everywhere
-    runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python run.py
-    envVars:
-      - key: GOOGLE_TOKEN
-        sync: false
-      - key: ADMIN_SECRET
-        sync: false
-      - key: CONFIG_YAML
-        sync: false
-"""
-    with open("render.yaml", "w") as f:
-        f.write(render_yaml_clean)
+    info("Uploading secrets...")
+    run_or_die([
+        "railway", "variables", "set",
+        f"GOOGLE_TOKEN={json.dumps(token_data)}",
+        f"ADMIN_SECRET={admin_secret}",
+        f"CONFIG_YAML={cfg_yaml}",
+    ], "Failed to set environment variables")
 
-    # Write a local secrets file for easy copy-paste into Render dashboard
-    with open("render-secrets.txt", "w") as f:
-        f.write(f"GOOGLE_TOKEN={json.dumps(token_data)}\n")
-        f.write(f"ADMIN_SECRET={admin_secret}\n")
-        f.write(f"CONFIG_YAML={cfg_contents}\n")
+    # Deploy
+    info("Deploying (this takes ~1 minute)...")
+    run_or_die(["railway", "up", "--detach"], "Deployment failed — run `railway logs` for details")
 
-    ok("render.yaml written")
-    ok("render-secrets.txt written  ← copy these into Render's environment variables")
+    # Get public URL (Railway generates one automatically)
+    url_result = run(["railway", "domain"], capture_output=True, text=True)
+    url = url_result.stdout.strip()
+    if not url.startswith("http"):
+        url = f"https://{url}" if url else "https://your-project.up.railway.app"
 
     print()
-    print(f"  {BOLD}Next steps to go live:{RST}")
+    print(f"  {BOLD}{GREEN}🎉  Live at {url}{RST}")
     print()
-    info("1. Push this repo to GitHub (git push)")
-    info("2. Go to https://render.com → New → Web Service")
-    info("3. Connect your GitHub repo")
-    info("4. Render auto-detects render.yaml — click Deploy")
-    info("5. Under Environment → add the 3 variables from render-secrets.txt")
-    print()
-    info(f"Your admin URL will be: https://<your-app>.onrender.com/auth/login?secret={admin_secret}")
-    info("(save that secret — it's also in render-secrets.txt)")
+    info(f"Share this link with anyone: {url}")
+    info(f"Admin (re-auth if needed): {url}/auth/login?secret={admin_secret}")
     print()
 
 # ── Local run ─────────────────────────────────────────────────────────────────
