@@ -184,10 +184,9 @@ async def booking_page(request: Request):
         for day in sorted(slots)
     ]
 
-    return templates.TemplateResponse("book.html", {
-        "request": request,
-        "config":  config,
-        "days":    days,
+    return templates.TemplateResponse(request, "book.html", {
+        "config": config,
+        "days":   days,
     })
 
 
@@ -216,8 +215,8 @@ async def book_slot(
         service = gc.get_service(db)
 
         if slot_taken(db, slot):
-            return templates.TemplateResponse("book.html", {
-                "request": request, "config": config, "days": [],
+            return templates.TemplateResponse(request, "book.html", {
+                "config": config, "days": [],
                 "error": "That slot was just booked — please pick another time.",
             }, status_code=409)
 
@@ -226,8 +225,8 @@ async def book_slot(
         all_slots = [s for day_slots in slots.values() for s in day_slots]
         if not any(s.replace(microsecond=0) == slot.replace(microsecond=0)
                    for s in all_slots):
-            return templates.TemplateResponse("book.html", {
-                "request": request, "config": config, "days": [],
+            return templates.TemplateResponse(request, "book.html", {
+                "config": config, "days": [],
                 "error": "That slot is no longer available — please pick another time.",
             }, status_code=409)
 
@@ -254,9 +253,8 @@ async def confirmed(request: Request, name: str, slot: str):
     except Exception:
         slot_label = slot
 
-    return templates.TemplateResponse("confirmed.html", {
-        "request": request, "config": config,
-        "name": name, "slot_label": slot_label,
+    return templates.TemplateResponse(request, "confirmed.html", {
+        "config": config, "name": name, "slot_label": slot_label,
     })
 
 
