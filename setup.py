@@ -193,12 +193,14 @@ def do_config(creds, profile):
     except Exception:
         pass
 
-    owner_name   = ask("Your name",             profile.get("name", ""))
+    owner_name   = ask("Your name (press Enter to accept)", profile.get("name", ""))
     owner_email  = ask("Your email",            profile.get("email", ""))
     calendar_id  = ask("Calendar ID",           primary_cal)
     timezone     = ask("Timezone",              detect_timezone())
     duration     = ask("Meeting length (mins)", "30")
-    description  = ask("Page subtitle (optional)", "")
+    description  = ask("Page subtitle (optional, press Enter to skip)", "")
+    if description.lower() in ("no", "n", "none", "skip"):
+        description = ""
 
     cfg = {
         "owner_name":               owner_name,
@@ -350,8 +352,12 @@ def run_local():
     print()
     info("Starting server...")
 
+    # Use the venv python if available, otherwise current interpreter
+    venv_python = Path(__file__).parent / "venv" / "bin" / "python"
+    py = str(venv_python) if venv_python.exists() else sys.executable
+
     server = subprocess.Popen(
-        [sys.executable, "run.py"],
+        [py, "run.py"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
     time.sleep(2)
@@ -363,10 +369,13 @@ def run_local():
         )
         public_url = None
         for line in tunnel.stdout:
-            if "trycloudflare.com" in line or ".cloudflare.com" in line:
+            # The actual tunnel URL always ends in .trycloudflare.com
+            if "trycloudflare.com" in line:
                 for part in line.split():
-                    if part.startswith("https://"):
-                        public_url = part.strip()
+                    if "trycloudflare.com" in part:
+                        public_url = part.strip().strip("|").strip()
+                        if not public_url.startswith("https://"):
+                            public_url = "https://" + public_url
                         break
             if public_url:
                 break
