@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-cal-book setup — run once, get a live booking page.
+free-cal setup — run once, get a live booking page.
 
   python setup.py
 
@@ -39,8 +39,8 @@ from googleapiclient.discovery import build
 # Fork this repo? Replace with your own Client ID + Secret.
 # See README → "Using your own credentials"
 
-BUNDLED_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID",     "YOUR_CLIENT_ID.apps.googleusercontent.com")
-BUNDLED_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "YOUR_CLIENT_SECRET")
+BUNDLED_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID",     "902695009996-jkro8pnpgqpd28abis88dbj9cedfj03l.apps.googleusercontent.com")
+BUNDLED_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "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")
 
 SCOPES = [
     "https://www.googleapis.com/auth/calendar",
@@ -262,7 +262,7 @@ def deploy_fly(token_data):
 
     # App name
     print()
-    app_name = ask("Fly app name (will become your URL)", "cal-book")
+    app_name = ask("Fly app name (will become your URL)", "free-cal")
     app_name = app_name.replace(" ", "-").lower()
 
     # Write fly.toml
@@ -382,7 +382,7 @@ def run_local():
 
 def main():
     print()
-    print(f"  {BOLD}cal-book setup{RST}")
+    print(f"  {BOLD}free-cal setup{RST}")
     print(f"  {DIM}─────────────{RST}")
 
     creds, profile = do_google_auth()

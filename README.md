@@ -1,4 +1,4 @@
-# cal-book
+# free-cal
 
 Self-hosted Calendly alternative. Free forever.
 
@@ -11,8 +11,8 @@ Share a booking link. People pick a time. It lands on your Google Calendar and t
 ### 1. Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/cal-book
-cd cal-book
+git clone https://github.com/YOUR_USERNAME/free-cal
+cd free-cal
 python3 -m venv venv
 source venv/bin/activate      # Windows: venv\Scripts\activate
 pip install -r requirements.txt
@@ -111,7 +111,7 @@ Restart `run.py` after changes.
 brew install flyctl
 flyctl auth login
 
-flyctl launch --name cal-book --region ewr --no-deploy
+flyctl launch --name free-cal --region ewr --no-deploy
 
 # Push your secrets (these come from .env after running setup.py)
 flyctl secrets set \
@@ -121,16 +121,16 @@ flyctl secrets set \
 flyctl deploy
 ```
 
-Your booking page is live at `https://cal-book.fly.dev`.
+Your booking page is live at `https://free-cal.fly.dev`.
 
 ### Railway / Render / any Docker host
 
 ```bash
-docker build -t cal-book .
+docker build -t free-cal .
 docker run -p 8080:8080 \
   -e GOOGLE_TOKEN="$(grep GOOGLE_TOKEN .env | cut -d= -f2-)" \
   -v $(pwd)/config.yaml:/app/config.yaml \
-  cal-book
+  free-cal
 ```
 
 ---

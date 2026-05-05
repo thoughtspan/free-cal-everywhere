@@ -1,4 +1,4 @@
-app = "cal-book"
+app = "free-cal"
 primary_region = "ewr"
 
 [build]

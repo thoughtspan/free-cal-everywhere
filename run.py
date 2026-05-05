@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run cal-book locally.
+Run free-cal locally.
 
   python run.py              # start on localhost:8080
   python run.py --port 3000  # custom port
@@ -34,5 +34,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', type=int, default=8080)
     args = parser.parse_args()
-    print(f"\n  cal-book running at http://localhost:{args.port}\n")
+    print(f"\n  free-cal running at http://localhost:{args.port}\n")
     uvicorn.run("main:app", host="0.0.0.0", port=args.port, reload=True)
