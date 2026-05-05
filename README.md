@@ -2,89 +2,57 @@
 
 Self-hosted Calendly alternative. Free forever.
 
-Share a booking link. People pick a time. It lands on your Google Calendar and they get an invite — no Calendly account, no monthly fee.
+Share a booking link. People pick a time. It lands on your Google Calendar with a Google Meet link — no Calendly account, no monthly fee.
 
 ---
 
 ## Setup
 
-### 1. Install
-
 ```bash
-git clone https://github.com/YOUR_USERNAME/free-cal-everywhere
-cd free-cal
-python3 -m venv venv
-source venv/bin/activate      # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+git clone https://github.com/thoughtspan/free-cal-everywhere
+cd free-cal-everywhere
+python3 setup.py
 ```
 
-### 2. Get Google credentials
+That's it. The setup wizard:
 
-You need a free Google Cloud project — takes about 3 minutes.
+1. Signs you in with Google (browser opens, closes automatically)
+2. Detects your calendar, name, and timezone — confirm or change
+3. Asks where to host it: **Railway** (free, real URL) or **locally** (localhost + Cloudflare tunnel)
 
-1. Go to [console.cloud.google.com](https://console.cloud.google.com/)
-2. Create a project (any name)
-3. **APIs & Services → Enable APIs → Google Calendar API → Enable**
-4. **Credentials → Create Credentials → OAuth client ID → Desktop app**
-5. Copy the **Client ID** and **Client Secret** (two strings — no file download needed)
-
-### 3. Run setup
-
-```bash
-python setup.py
-```
-
-This will:
-- Ask for your Client ID and Client Secret
-- Open a browser so you can sign in with Google
-- Show your calendar list so you can pick the right one
-- Walk you through the rest of the config
-- Save everything to `.env` and `config.yaml`
-
-### 4. Run
-
-```bash
-python run.py
-# → http://localhost:8080
-```
+No manual pip install, no credential files, no config editing required.
 
 ---
 
-## Sharing your booking link
+## Hosting options
 
-`localhost:8080` is only reachable on your machine. To give people a real URL:
+### Railway (recommended — free, always on)
 
-**Free tunnel (easiest):**
-```bash
-# Cloudflare — no account needed
-brew install cloudflared
-cloudflared tunnel --url http://localhost:8080
+Choose **Railway** in the setup wizard. It installs the CLI, logs you in, deploys your app, and prints your live URL — entirely from the terminal. No dashboard required.
 
-# or ngrok
-ngrok http 8080
-```
+You'll need a free [Railway account](https://railway.app) (created during the login step).
 
-Both give you a public HTTPS URL you can share. Run it alongside `python run.py`.
+### Run locally
 
-**Self-host permanently:** see [Deployment](#deployment) below.
+Choose **locally** in the setup wizard. It starts the server on `localhost:8080` and optionally opens a Cloudflare tunnel so you get a public HTTPS URL to share without any account.
 
 ---
 
 ## Configuration
 
-Edit `config.yaml` to control your booking page:
+`setup.py` writes `config.yaml` with smart defaults. Edit it anytime:
 
 ```yaml
 owner_name:  Your Name
 owner_email: you@gmail.com
 calendar_id: you@gmail.com
 
-timezone: America/New_York     # IANA timezone
+timezone: America/New_York
 
-description: "30-minute intro call."   # optional subtitle on booking page
+description: "30-minute intro call."   # optional subtitle
 
 meeting_duration_minutes: 30
-buffer_minutes: 15             # gap blocked around each meeting
+buffer_minutes: 15       # gap blocked before/after each meeting
 lookahead_days: 14
 
 working_hours:
@@ -99,39 +67,36 @@ meeting_title: "Meeting with {name}"
 confirmation_message: "Looking forward to connecting."
 ```
 
-Restart `run.py` after changes.
-
----
-
-## Deployment
-
-### Railway (free tier, always on)
-
-`setup.py` handles this entirely — choose **Railway** when prompted. It installs
-the Railway CLI, logs you in via browser, creates the project, uploads your secrets,
-and deploys. No manual steps.
-
-Your booking page will be live at `https://free-cal-everywhere.up.railway.app`.
-
-### Railway / Render / any Docker host
-
-```bash
-docker build -t free-cal .
-docker run -p 8080:8080 \
-  -e GOOGLE_TOKEN="$(grep GOOGLE_TOKEN .env | cut -d= -f2-)" \
-  -v $(pwd)/config.yaml:/app/config.yaml \
-  free-cal
-```
+Restart `run.py` after changes (Railway redeploys automatically on git push).
 
 ---
 
 ## How it works
 
-1. Reads your Google Calendar to find free time within your working hours
-2. Shows available slots on the booking page
-3. When someone books, creates a Calendar event with them as an attendee
-4. Google sends them the invite automatically — no email configuration needed
-5. Sync state stored in `bookings.db` (SQLite) to prevent double-bookings
+1. Reads your Google Calendar to find free time within working hours
+2. Shows a booking page — dark, Cal.com-style UI with month calendar and time slots
+3. When someone books, creates a Google Calendar event with a Google Meet link
+4. Google sends the invite (with Meet link) automatically — no email setup needed
+5. SQLite (`bookings.db`) prevents double-bookings between the calendar check and event creation
+
+---
+
+## Using your own Google credentials
+
+The bundled OAuth credentials work out of the box. To use your own (e.g. for a forked version):
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com)
+2. Create a project → **APIs & Services → Enable → Google Calendar API**
+3. **Credentials → Create → OAuth client ID → Desktop app**
+4. Set environment variables before running setup:
+
+```bash
+export GOOGLE_CLIENT_ID=your-client-id
+export GOOGLE_CLIENT_SECRET=your-client-secret
+python3 setup.py
+```
+
+---
 
 ## Files
 
@@ -139,8 +104,10 @@ docker run -p 8080:8080 \
 |------|---------|
 | `setup.py` | One-time setup wizard |
 | `run.py` | Start the server locally |
+| `main.py` | FastAPI app |
+| `calendar_client.py` | Google Calendar integration |
 | `config.yaml` | Your booking page settings |
-| `.env` | Secrets — **never commit this** |
+| `Procfile` | Railway start command |
 | `bookings.db` | Local booking state — safe to delete |
 
 ## License
