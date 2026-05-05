@@ -176,7 +176,7 @@ async def booking_page(request: Request):
 
     days = [
         {
-            'date':       day,
+            'date':       day.isoformat(),
             'date_label': day.strftime('%A, %B %-d'),
             'slots': [{'iso': s.isoformat(), 'label': s.strftime('%-I:%M %p')}
                       for s in slots[day]],
