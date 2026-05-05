@@ -1,65 +1,60 @@
 """
 Google Calendar helpers — availability + event creation.
+Credentials come from the database (stored after OAuth flow).
 """
 
 import json
-import os
-import tempfile
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-SCOPES = ['https://www.googleapis.com/auth/calendar']
+SCOPES = [
+    'https://www.googleapis.com/auth/calendar',
+    'openid',
+    'https://www.googleapis.com/auth/userinfo.email',
+]
 
 
-def get_service():
-    """Build a Calendar service, handling both file and env-var token."""
-    token_json = os.environ.get('GOOGLE_TOKEN')
-    creds_json = os.environ.get('GOOGLE_CREDENTIALS')
-
-    if token_json:
-        # Running on Fly.io — write secrets to temp files
-        tf = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
-        tf.write(token_json); tf.close()
-        token_file = tf.name
-    elif os.path.exists('token.json'):
-        token_file = 'token.json'
-    else:
-        raise RuntimeError("No Google token found. Run setup.py or set GOOGLE_TOKEN secret.")
-
-    creds = Credentials.from_authorized_user_file(token_file, SCOPES)
-
+def creds_from_db(db) -> Credentials:
+    row = db.execute("SELECT token_json FROM google_tokens LIMIT 1").fetchone()
+    if not row:
+        raise RuntimeError("Not authenticated — visit /auth/login")
+    creds = Credentials.from_authorized_user_info(json.loads(row[0]), SCOPES)
     if creds.expired and creds.refresh_token:
-        if creds_json:
-            cf = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
-            cf.write(creds_json); cf.close()
-            from google_auth_oauthlib.flow import InstalledAppFlow
         creds.refresh(Request())
-        # Persist refreshed token back to env isn't possible, but Fly secrets
-        # don't expire often — user re-runs set-secret if needed.
+        db.execute("UPDATE google_tokens SET token_json=?",
+                   (creds_to_json(creds),))
+        db.commit()
+    return creds
 
-    return build('calendar', 'v3', credentials=creds)
+
+def creds_to_json(creds: Credentials) -> str:
+    return json.dumps({
+        'token':         creds.token,
+        'refresh_token': creds.refresh_token,
+        'token_uri':     creds.token_uri,
+        'client_id':     creds.client_id,
+        'client_secret': creds.client_secret,
+        'scopes':        creds.scopes,
+    })
 
 
-def get_busy_blocks(service, calendar_id, day: date, tz: ZoneInfo) -> list[tuple]:
-    """
-    Return list of (start, end) datetime pairs for events on `day`.
-    Uses freebusy query — fast and doesn't expose event details.
-    """
+def get_service(db):
+    return build('calendar', 'v3', credentials=creds_from_db(db))
+
+
+def get_busy(service, calendar_id: str, day: date, tz: ZoneInfo) -> list:
     day_start = datetime(day.year, day.month, day.day, 0, 0, tzinfo=tz)
     day_end   = day_start + timedelta(days=1)
-
-    body = {
+    resp = service.freebusy().query(body={
         'timeMin': day_start.isoformat(),
         'timeMax': day_end.isoformat(),
         'items':   [{'id': calendar_id}],
-    }
-    resp   = service.freebusy().query(body=body).execute()
+    }).execute()
     blocks = resp.get('calendars', {}).get(calendar_id, {}).get('busy', [])
-
     result = []
     for b in blocks:
         s = datetime.fromisoformat(b['start'].replace('Z', '+00:00')).astimezone(tz)
@@ -68,52 +63,41 @@ def get_busy_blocks(service, calendar_id, day: date, tz: ZoneInfo) -> list[tuple
     return result
 
 
-def get_available_slots(service, config: dict) -> dict[date, list[datetime]]:
-    """
-    Return {date: [slot_datetime, ...]} for the lookahead window.
-    Slots are in the owner's timezone.
-    """
-    tz           = ZoneInfo(config['timezone'])
-    duration     = timedelta(minutes=config['meeting_duration_minutes'])
-    buffer       = timedelta(minutes=config['buffer_minutes'])
-    lookahead    = config['lookahead_days']
-    calendar_id  = config['calendar_id']
-    working_hrs  = config['working_hours']
-
-    day_names = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday']
+def get_available_slots(service, config: dict) -> dict:
+    tz        = ZoneInfo(config['timezone'])
+    duration  = timedelta(minutes=config['meeting_duration_minutes'])
+    buffer    = timedelta(minutes=config['buffer_minutes'])
+    interval  = timedelta(minutes=config.get('slot_interval_minutes',
+                                              config['meeting_duration_minutes']))
     today     = datetime.now(tz).date()
+    day_names = ['monday','tuesday','wednesday','thursday',
+                 'friday','saturday','sunday']
     result    = {}
 
-    for offset in range(1, lookahead + 1):      # start tomorrow
+    for offset in range(1, config['lookahead_days'] + 1):
         day     = today + timedelta(days=offset)
         day_key = day_names[day.weekday()]
-
-        if day_key not in working_hrs:
+        if day_key not in config['working_hours']:
             continue
-
-        wh         = working_hrs[day_key]
+        wh = config['working_hours'][day_key]
         work_start = datetime.strptime(wh['start'], '%H:%M').replace(
-                         year=day.year, month=day.month, day=day.day,
-                         tzinfo=tz)
-        work_end   = datetime.strptime(wh['end'], '%H:%M').replace(
-                         year=day.year, month=day.month, day=day.day,
-                         tzinfo=tz)
+            year=day.year, month=day.month, day=day.day, tzinfo=tz)
+        work_end = datetime.strptime(wh['end'], '%H:%M').replace(
+            year=day.year, month=day.month, day=day.day, tzinfo=tz)
 
-        busy   = get_busy_blocks(service, calendar_id, day, tz)
+        busy   = get_busy(service, config['calendar_id'], day, tz)
         slots  = []
         cursor = work_start
 
         while cursor + duration <= work_end:
             slot_end = cursor + duration
-            # Check overlap with any busy block (including buffer)
-            blocked = any(
+            blocked  = any(
                 cursor < (be + buffer) and (slot_end + buffer) > bs
                 for bs, be in busy
             )
             if not blocked:
                 slots.append(cursor)
-            cursor += timedelta(minutes=config.get('slot_interval_minutes',
-                                                    config['meeting_duration_minutes']))
+            cursor += interval
 
         if slots:
             result[day] = slots
@@ -123,29 +107,22 @@ def get_available_slots(service, config: dict) -> dict[date, list[datetime]]:
 
 def create_event(service, config: dict, slot: datetime,
                  guest_name: str, guest_email: str) -> str:
-    """Create the calendar event and return its HTML link."""
-    tz       = ZoneInfo(config['timezone'])
-    duration = timedelta(minutes=config['meeting_duration_minutes'])
-    end      = slot + duration
-
-    title = config.get('meeting_title', 'Meeting with {name}').format(name=guest_name)
-
-    event = {
-        'summary':     title,
-        'description': config.get('confirmation_message', ''),
-        'start':       {'dateTime': slot.isoformat(), 'timeZone': config['timezone']},
-        'end':         {'dateTime': end.isoformat(),  'timeZone': config['timezone']},
-        'attendees':   [
-            {'email': config['owner_email'], 'responseStatus': 'accepted'},
-            {'email': guest_email},
-        ],
-        'sendUpdates': 'all',   # Google sends invite emails automatically
-    }
-
+    tz      = ZoneInfo(config['timezone'])
+    end     = slot + timedelta(minutes=config['meeting_duration_minutes'])
+    title   = config.get('meeting_title', 'Meeting with {name}').format(name=guest_name)
     created = service.events().insert(
         calendarId=config['calendar_id'],
-        body=event,
         sendNotifications=True,
+        body={
+            'summary':     title,
+            'description': config.get('confirmation_message', ''),
+            'start': {'dateTime': slot.isoformat(), 'timeZone': config['timezone']},
+            'end':   {'dateTime': end.isoformat(),  'timeZone': config['timezone']},
+            'attendees': [
+                {'email': config['owner_email'], 'responseStatus': 'accepted'},
+                {'email': guest_email},
+            ],
+            'sendUpdates': 'all',
+        },
     ).execute()
-
     return created.get('htmlLink', '')
