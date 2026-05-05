@@ -238,94 +238,78 @@ def do_host(token_data):
     print()
 
     choice = ask_choice("", [
-        ("Fly.io",       "free, always on, you get a real URL"),
+        ("Render",       "free tier, always on, real URL — connect your GitHub repo"),
         ("Run locally",  "starts on localhost — share via a free tunnel"),
     ], default=1)
 
     if choice == 1:
-        deploy_fly(token_data)
+        deploy_render(token_data)
     else:
         run_local()
 
-# ── Fly.io deployment ─────────────────────────────────────────────────────────
+# ── Render deployment ─────────────────────────────────────────────────────────
 
-def deploy_fly(token_data):
+def deploy_render(token_data):
     print()
 
-    # Install flyctl if missing
-    if not cmd_exists("flyctl") and not cmd_exists("fly"):
-        info("flyctl not found — installing...")
-        if platform.system() == "Darwin":
-            run_or_die(["brew", "install", "flyctl"], "Failed to install flyctl via brew")
-        else:
-            run_or_die(
-                ["sh", "-c", "curl -L https://fly.io/install.sh | sh"],
-                "Failed to install flyctl"
-            )
-        ok("flyctl installed")
-
-    fly = shutil.which("flyctl") or shutil.which("fly")
-
-    # Auth check
-    result = run([fly, "auth", "whoami"], capture_output=True, text=True)
-    if result.returncode != 0:
-        info("Opening Fly.io login...")
-        run_or_die([fly, "auth", "login"], "Fly.io login failed")
-
-    # App name
-    print()
-    app_name = ask("Fly app name (will become your URL)", "free-cal")
-    app_name = app_name.replace(" ", "-").lower()
-
-    # Write fly.toml
-    fly_toml = f"""app = "{app_name}"
-primary_region = "ewr"
-
-[build]
-
-[http_service]
-  internal_port = 8080
-  force_https   = true
-  auto_stop_machines  = false
-  auto_start_machines = true
-  min_machines_running = 1
-
-[[vm]]
-  memory = "256mb"
-  cpus   = 1
-"""
-    with open("fly.toml", "w") as f:
-        f.write(fly_toml)
-
-    print()
-    info("Creating app on Fly.io...")
-    run([fly, "apps", "create", app_name], capture_output=True)
-
-    info("Uploading secrets...")
     admin_secret = os.urandom(12).hex()
-    run_or_die([
-        fly, "secrets", "set",
-        f"GOOGLE_TOKEN={json.dumps(token_data)}",
-        f"ADMIN_SECRET={admin_secret}",
-        "--app", app_name,
-    ], "Failed to set secrets")
 
-    # Upload config.yaml as a secret too
+    # Write render.yaml
+    render_yaml = f"""services:
+  - type: web
+    name: free-cal-everywhere
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py
+    envVars:
+      - key: GOOGLE_TOKEN
+        value: {json.dumps(json.dumps(token_data))}
+      - key: ADMIN_SECRET
+        value: {admin_secret}
+      - key: CONFIG_YAML
+        value: ""
+"""
+    # CONFIG_YAML is easier to set in the dashboard; write it to a note instead
     with open("config.yaml") as f:
         cfg_contents = f.read()
-    run([fly, "secrets", "set", f"CONFIG_YAML={cfg_contents}", "--app", app_name],
-        capture_output=True)
 
-    info("Deploying (this takes ~1 minute)...")
-    run_or_die([fly, "deploy", "--app", app_name, "--remote-only"],
-               "Deployment failed — run `flyctl logs` for details")
+    render_yaml_clean = """services:
+  - type: web
+    name: free-cal-everywhere
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py
+    envVars:
+      - key: GOOGLE_TOKEN
+        sync: false
+      - key: ADMIN_SECRET
+        sync: false
+      - key: CONFIG_YAML
+        sync: false
+"""
+    with open("render.yaml", "w") as f:
+        f.write(render_yaml_clean)
 
-    url = f"https://{app_name}.fly.dev"
+    # Write a local secrets file for easy copy-paste into Render dashboard
+    with open("render-secrets.txt", "w") as f:
+        f.write(f"GOOGLE_TOKEN={json.dumps(token_data)}\n")
+        f.write(f"ADMIN_SECRET={admin_secret}\n")
+        f.write(f"CONFIG_YAML={cfg_contents}\n")
+
+    ok("render.yaml written")
+    ok("render-secrets.txt written  ← copy these into Render's environment variables")
+
     print()
-    print(f"  {BOLD}{GREEN}🎉  Live at {url}{RST}")
+    print(f"  {BOLD}Next steps to go live:{RST}")
     print()
-    info(f"Share this link with anyone: {url}")
-    info(f"Admin (re-auth if needed): {url}/auth/login?secret={admin_secret}")
+    info("1. Push this repo to GitHub (git push)")
+    info("2. Go to https://render.com → New → Web Service")
+    info("3. Connect your GitHub repo")
+    info("4. Render auto-detects render.yaml — click Deploy")
+    info("5. Under Environment → add the 3 variables from render-secrets.txt")
+    print()
+    info(f"Your admin URL will be: https://<your-app>.onrender.com/auth/login?secret={admin_secret}")
+    info("(save that secret — it's also in render-secrets.txt)")
     print()
 
 # ── Local run ─────────────────────────────────────────────────────────────────
@@ -400,8 +384,8 @@ def run_local():
 
 def main():
     print()
-    print(f"  {BOLD}free-cal setup{RST}")
-    print(f"  {DIM}─────────────{RST}")
+    print(f"  {BOLD}Free Cal Everywhere — setup{RST}")
+    print(f"  {DIM}──────────────────────────{RST}")
 
     creds, profile = do_google_auth()
     cfg            = do_config(creds, profile)

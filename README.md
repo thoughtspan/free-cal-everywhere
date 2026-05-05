@@ -1,4 +1,4 @@
-# free-cal
+# Free Cal Everywhere
 
 Self-hosted Calendly alternative. Free forever.
 
@@ -11,7 +11,7 @@ Share a booking link. People pick a time. It lands on your Google Calendar and t
 ### 1. Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/free-cal
+git clone https://github.com/YOUR_USERNAME/free-cal-everywhere
 cd free-cal
 python3 -m venv venv
 source venv/bin/activate      # Windows: venv\Scripts\activate
@@ -105,23 +105,13 @@ Restart `run.py` after changes.
 
 ## Deployment
 
-### Fly.io (free, always on)
+### Render (free, always on)
 
-```bash
-brew install flyctl
-flyctl auth login
+`setup.py` handles this — choose **Render** when prompted. It writes `render.yaml`
+and `render-secrets.txt`, then walks you through connecting your GitHub repo at
+[render.com](https://render.com).
 
-flyctl launch --name free-cal --region ewr --no-deploy
-
-# Push your secrets (these come from .env after running setup.py)
-flyctl secrets set \
-  GOOGLE_TOKEN="$(grep GOOGLE_TOKEN .env | cut -d= -f2-)" \
-  ADMIN_SECRET="$(grep ADMIN_SECRET .env | cut -d= -f2-)"
-
-flyctl deploy
-```
-
-Your booking page is live at `https://free-cal.fly.dev`.
+Your booking page will be live at `https://free-cal-everywhere.onrender.com`.
 
 ### Railway / Render / any Docker host
 

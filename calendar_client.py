@@ -123,6 +123,7 @@ def create_event(service, config: dict, slot: datetime,
     created = service.events().insert(
         calendarId=config['calendar_id'],
         sendNotifications=True,
+        conferenceDataVersion=1,
         body={
             'summary':     title,
             'description': config.get('confirmation_message', ''),
@@ -132,6 +133,9 @@ def create_event(service, config: dict, slot: datetime,
                 {'email': config['owner_email'], 'responseStatus': 'accepted'},
                 {'email': guest_email},
             ],
+            'conferenceData': {
+                'createRequest': {'requestId': f'{slot.isoformat()}-{guest_email}'},
+            },
             'sendUpdates': 'all',
         },
     ).execute()
