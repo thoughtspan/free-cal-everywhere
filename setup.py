@@ -10,6 +10,7 @@ That's it.
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -369,15 +370,9 @@ def run_local():
         )
         public_url = None
         for line in tunnel.stdout:
-            # The actual tunnel URL always ends in .trycloudflare.com
-            if "trycloudflare.com" in line:
-                for part in line.split():
-                    if "trycloudflare.com" in part:
-                        public_url = part.strip().strip("|").strip()
-                        if not public_url.startswith("https://"):
-                            public_url = "https://" + public_url
-                        break
-            if public_url:
+            m = re.search(r'https://[a-z0-9-]+\.trycloudflare\.com', line)
+            if m:
+                public_url = m.group(0)
                 break
 
         print()
