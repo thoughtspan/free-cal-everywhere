@@ -1,186 +1,397 @@
 #!/usr/bin/env python3
 """
-cal-book setup — run this once to connect your Google Calendar.
+cal-book setup — run once, get a live booking page.
 
-What it does:
-  1. Asks for your Google OAuth credentials (Client ID + Secret)
-  2. Opens a browser so you can sign in with Google
-  3. Saves your token and writes a .env file ready for local use or deployment
+  python setup.py
 
-You need a Google Cloud project with Calendar API enabled.
-Instructions: https://github.com/YOUR_USERNAME/cal-book#setup
+That's it.
 """
 
 import json
 import os
+import platform
 import shutil
+import subprocess
 import sys
-import webbrowser
+import time
+from pathlib import Path
 
-# ── Dependency check ──────────────────────────────────────────────────────────
-try:
-    import yaml
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import build
-except ImportError:
-    print("\n  Run this first:  pip install -r requirements.txt\n")
-    sys.exit(1)
+# ── Dependency bootstrap ──────────────────────────────────────────────────────
+# Install requirements silently if missing so the user never has to.
 
-SCOPES    = ['https://www.googleapis.com/auth/calendar', 'openid',
-             'https://www.googleapis.com/auth/userinfo.email']
-ENV_FILE  = '.env'
-TOK_FILE  = 'token.json'
-CFG_FILE  = 'config.yaml'
+def _ensure_deps():
+    try:
+        import yaml, google.auth, googleapiclient, google_auth_oauthlib  # noqa
+    except ImportError:
+        print("  Installing dependencies...")
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt"]
+        )
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+_ensure_deps()
+
+import yaml
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+
+# ── OAuth client — register once at console.cloud.google.com ─────────────────
+# Desktop app credentials are not secret (Google's own docs acknowledge this).
+# Fork this repo? Replace with your own Client ID + Secret.
+# See README → "Using your own credentials"
+
+BUNDLED_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID",     "YOUR_CLIENT_ID.apps.googleusercontent.com")
+BUNDLED_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "YOUR_CLIENT_SECRET")
+
+SCOPES = [
+    "https://www.googleapis.com/auth/calendar",
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+]
+
+# ── Terminal helpers ──────────────────────────────────────────────────────────
+
+BOLD  = "\033[1m"
+DIM   = "\033[2m"
+GREEN = "\033[32m"
+CYAN  = "\033[36m"
+RED   = "\033[31m"
+RST   = "\033[0m"
+
+def hdr(n, text):
+    print(f"\n{BOLD}  {n}  {text}{RST}")
+    print(f"  {'─' * (len(text) + 5)}")
+
+def ok(msg):   print(f"  {GREEN}✓{RST}  {msg}")
+def err(msg):  print(f"  {RED}✗{RST}  {msg}")
+def info(msg): print(f"  {DIM}{msg}{RST}")
 
 def ask(prompt, default=None):
-    suffix = f" [{default}]" if default else ""
-    val = input(f"  {prompt}{suffix}: ").strip()
-    return val or default
+    suffix = f" {DIM}[{default}]{RST}" if default is not None else ""
+    try:
+        val = input(f"  {prompt}{suffix}: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print(); sys.exit(0)
+    return val if val else default
 
-def write_env(vals: dict):
-    lines = []
-    if os.path.exists(ENV_FILE):
-        with open(ENV_FILE) as f:
-            for line in f:
-                key = line.split('=')[0].strip()
-                if key not in vals:
-                    lines.append(line.rstrip())
-    for k, v in vals.items():
-        lines.append(f'{k}={v}')
-    with open(ENV_FILE, 'w') as f:
-        f.write('\n'.join(lines) + '\n')
+def ask_choice(prompt, options, default=1):
+    for i, (label, sub) in enumerate(options, 1):
+        marker = f"{BOLD}←{RST}" if i == default else " "
+        print(f"    {i}.  {label}  {DIM}{sub}{RST}  {marker}")
+    try:
+        raw = input(f"\n  Choice [{default}]: ").strip()
+        return int(raw) if raw else default
+    except (ValueError, EOFError, KeyboardInterrupt):
+        return default
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── System helpers ────────────────────────────────────────────────────────────
 
-def main():
-    print("\n" + "─" * 50)
-    print("  cal-book setup")
-    print("─" * 50 + "\n")
+def detect_timezone():
+    try:
+        ltime = Path("/etc/localtime")
+        if ltime.is_symlink():
+            target = str(ltime.resolve())
+            if "zoneinfo/" in target:
+                return target.split("zoneinfo/")[-1]
+    except Exception:
+        pass
+    try:
+        result = subprocess.run(
+            ["timedatectl", "show", "--property=Timezone", "--value"],
+            capture_output=True, text=True
+        )
+        if result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return "America/New_York"
 
-    # ── Step 1: Google credentials ──────────────────────────────────────────
+def cmd_exists(name):
+    return shutil.which(name) is not None
 
-    print("Step 1 of 3 — Google OAuth credentials\n")
-    print("  You need a Google Cloud project with Calendar API enabled.")
-    print("  Full instructions in the README, but the short version:\n")
-    print("    1. https://console.cloud.google.com/ → create a project")
-    print("    2. APIs & Services → Enable → Google Calendar API")
-    print("    3. Credentials → Create → OAuth client ID → Desktop app")
-    print("    4. Copy the Client ID and Client Secret\n")
+def run(args, **kwargs):
+    return subprocess.run(args, **kwargs)
 
-    client_id     = ask("Client ID")
-    client_secret = ask("Client Secret")
+def run_or_die(args, msg="Command failed"):
+    result = run(args)
+    if result.returncode != 0:
+        err(msg); sys.exit(1)
 
-    if not client_id or not client_secret:
-        print("\n  Client ID and Secret are required.\n")
+# ── Step 1: Google sign-in ────────────────────────────────────────────────────
+
+def do_google_auth():
+    hdr("①", "Sign in with Google")
+    print()
+
+    if BUNDLED_CLIENT_ID.startswith("YOUR_"):
+        err("No OAuth credentials configured.")
+        info("Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, or see README.")
         sys.exit(1)
-
-    # ── Step 2: OAuth sign-in ───────────────────────────────────────────────
-
-    print("\nStep 2 of 3 — Sign in with Google\n")
-    print("  Opening your browser. Sign in and allow calendar access.")
-    print("  (The browser tab will close automatically.)\n")
 
     client_config = {
         "installed": {
-            "client_id":     client_id,
-            "client_secret": client_secret,
+            "client_id":     BUNDLED_CLIENT_ID,
+            "client_secret": BUNDLED_CLIENT_SECRET,
             "auth_uri":      "https://accounts.google.com/o/oauth2/auth",
             "token_uri":     "https://oauth2.googleapis.com/token",
             "redirect_uris": ["http://localhost"],
         }
     }
 
+    print("  Opening your browser — sign in and allow Calendar access.")
+    print("  The tab will close automatically.\n")
     flow  = InstalledAppFlow.from_client_config(client_config, SCOPES)
     creds = flow.run_local_server(port=0, open_browser=True,
-                                   success_message="Authenticated! You can close this tab.")
+                                   success_message="Done! You can close this tab.")
+
+    # Fetch profile for smart defaults
+    profile = {}
+    try:
+        svc     = build("oauth2", "v2", credentials=creds)
+        profile = svc.userinfo().get().execute()
+    except Exception:
+        pass
+
+    ok(f"Signed in as {profile.get('email', 'your account')}")
 
     token_data = {
-        'token':         creds.token,
-        'refresh_token': creds.refresh_token,
-        'token_uri':     creds.token_uri,
-        'client_id':     creds.client_id,
-        'client_secret': creds.client_secret,
-        'scopes':        list(creds.scopes),
+        "token":         creds.token,
+        "refresh_token": creds.refresh_token,
+        "token_uri":     creds.token_uri,
+        "client_id":     creds.client_id,
+        "client_secret": creds.client_secret,
+        "scopes":        list(creds.scopes),
     }
-    with open(TOK_FILE, 'w') as f:
+    with open("token.json", "w") as f:
         json.dump(token_data, f, indent=2)
 
-    print(f"  ✓  Token saved to {TOK_FILE}")
+    return creds, profile
 
-    # Print which account they signed into
+# ── Step 2: Config ────────────────────────────────────────────────────────────
+
+def do_config(creds, profile):
+    hdr("②", "Your booking page")
+    print()
+
+    # Detect primary calendar
+    primary_cal = profile.get("email", "")
     try:
-        service = build('oauth2', 'v2', credentials=creds)
-        info    = service.userinfo().get().execute()
-        print(f"  ✓  Signed in as: {info.get('email', 'unknown')}")
+        svc  = build("calendar", "v3", credentials=creds)
+        cals = svc.calendarList().list().execute().get("items", [])
+        for c in cals:
+            if c.get("primary"):
+                primary_cal = c["id"]
+                break
     except Exception:
         pass
 
-    # ── Step 3: config.yaml ─────────────────────────────────────────────────
+    owner_name   = ask("Your name",             profile.get("name", ""))
+    owner_email  = ask("Your email",            profile.get("email", ""))
+    calendar_id  = ask("Calendar ID",           primary_cal)
+    timezone     = ask("Timezone",              detect_timezone())
+    duration     = ask("Meeting length (mins)", "30")
+    description  = ask("Page subtitle (optional)", "")
 
-    print("\nStep 3 of 3 — Configure your booking page\n")
+    cfg = {
+        "owner_name":               owner_name,
+        "owner_email":              owner_email,
+        "calendar_id":              calendar_id,
+        "timezone":                 timezone,
+        "meeting_duration_minutes": int(duration or 30),
+        "buffer_minutes":           15,
+        "lookahead_days":           14,
+        "working_hours": {
+            "monday":    {"start": "09:00", "end": "18:00"},
+            "tuesday":   {"start": "09:00", "end": "18:00"},
+            "wednesday": {"start": "09:00", "end": "18:00"},
+            "thursday":  {"start": "09:00", "end": "18:00"},
+            "friday":    {"start": "09:00", "end": "17:00"},
+        },
+        "meeting_title":        "Meeting with {name}",
+        "confirmation_message": "Looking forward to connecting.",
+    }
+    if description:
+        cfg["description"] = description
 
-    if not os.path.exists(CFG_FILE):
-        shutil.copy('config.example.yaml', CFG_FILE)
-
-    with open(CFG_FILE) as f:
-        cfg = yaml.safe_load(f)
-
-    # Print their calendar list to help them fill in calendar_id
-    try:
-        cal_service = build('calendar', 'v3', credentials=creds)
-        calendars   = cal_service.calendarList().list().execute().get('items', [])
-        print("  Your calendars:\n")
-        for c in sorted(calendars, key=lambda x: (not x.get('primary'), x['summary'])):
-            tag = "  ← primary" if c.get('primary') else ""
-            print(f"    {c['summary']}{tag}")
-            print(f"      {c['id']}")
-        print()
-    except Exception:
-        pass
-
-    name        = ask("Your name",       cfg.get('owner_name', ''))
-    email       = ask("Your email",      cfg.get('owner_email', ''))
-    calendar_id = ask("Calendar ID to use",
-                       cfg.get('calendar_id', email))
-    timezone    = ask("Timezone (IANA)", cfg.get('timezone', 'America/New_York'))
-    duration    = ask("Meeting length (minutes)", str(cfg.get('meeting_duration_minutes', 30)))
-    admin_secret = ask("Admin secret (protects /auth/login)", "changeme")
-
-    # Patch config.yaml
-    cfg.update({
-        'owner_name':               name,
-        'owner_email':              email,
-        'calendar_id':              calendar_id,
-        'timezone':                 timezone,
-        'meeting_duration_minutes': int(duration),
-    })
-    with open(CFG_FILE, 'w') as f:
+    with open("config.yaml", "w") as f:
         yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
-    print(f"\n  ✓  Config saved to {CFG_FILE}")
 
-    # Write .env
-    token_json = json.dumps(token_data)
-    write_env({
-        'GOOGLE_TOKEN':      token_json,
-        'GOOGLE_CLIENT_ID':  client_id,
-        'GOOGLE_CLIENT_SECRET': client_secret,
-        'REDIRECT_URI':      'http://localhost:8080/auth/callback',
-        'ADMIN_SECRET':      admin_secret,
-    })
-    print(f"  ✓  Secrets saved to {ENV_FILE}  (never commit this)")
+    ok("Config saved to config.yaml")
+    return cfg
 
-    # ── Done ────────────────────────────────────────────────────────────────
+# ── Step 3: Host ──────────────────────────────────────────────────────────────
 
-    print("\n" + "─" * 50)
-    print("  Setup complete!\n")
-    print("  Run locally:")
-    print("    python run.py\n")
-    print("  Deploy to Fly.io:")
-    print("    See README → Deployment\n")
-    print("─" * 50 + "\n")
+def do_host(token_data):
+    hdr("③", "Where do you want to host it?")
+    print()
 
+    choice = ask_choice("", [
+        ("Fly.io",       "free, always on, you get a real URL"),
+        ("Run locally",  "starts on localhost — share via a free tunnel"),
+    ], default=1)
 
-if __name__ == '__main__':
+    if choice == 1:
+        deploy_fly(token_data)
+    else:
+        run_local()
+
+# ── Fly.io deployment ─────────────────────────────────────────────────────────
+
+def deploy_fly(token_data):
+    print()
+
+    # Install flyctl if missing
+    if not cmd_exists("flyctl") and not cmd_exists("fly"):
+        info("flyctl not found — installing...")
+        if platform.system() == "Darwin":
+            run_or_die(["brew", "install", "flyctl"], "Failed to install flyctl via brew")
+        else:
+            run_or_die(
+                ["sh", "-c", "curl -L https://fly.io/install.sh | sh"],
+                "Failed to install flyctl"
+            )
+        ok("flyctl installed")
+
+    fly = shutil.which("flyctl") or shutil.which("fly")
+
+    # Auth check
+    result = run([fly, "auth", "whoami"], capture_output=True, text=True)
+    if result.returncode != 0:
+        info("Opening Fly.io login...")
+        run_or_die([fly, "auth", "login"], "Fly.io login failed")
+
+    # App name
+    print()
+    app_name = ask("Fly app name (will become your URL)", "cal-book")
+    app_name = app_name.replace(" ", "-").lower()
+
+    # Write fly.toml
+    fly_toml = f"""app = "{app_name}"
+primary_region = "ewr"
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https   = true
+  auto_stop_machines  = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  memory = "256mb"
+  cpus   = 1
+"""
+    with open("fly.toml", "w") as f:
+        f.write(fly_toml)
+
+    print()
+    info("Creating app on Fly.io...")
+    run([fly, "apps", "create", app_name], capture_output=True)
+
+    info("Uploading secrets...")
+    admin_secret = os.urandom(12).hex()
+    run_or_die([
+        fly, "secrets", "set",
+        f"GOOGLE_TOKEN={json.dumps(token_data)}",
+        f"ADMIN_SECRET={admin_secret}",
+        "--app", app_name,
+    ], "Failed to set secrets")
+
+    # Upload config.yaml as a secret too
+    with open("config.yaml") as f:
+        cfg_contents = f.read()
+    run([fly, "secrets", "set", f"CONFIG_YAML={cfg_contents}", "--app", app_name],
+        capture_output=True)
+
+    info("Deploying (this takes ~1 minute)...")
+    run_or_die([fly, "deploy", "--app", app_name, "--remote-only"],
+               "Deployment failed — run `flyctl logs` for details")
+
+    url = f"https://{app_name}.fly.dev"
+    print()
+    print(f"  {BOLD}{GREEN}🎉  Live at {url}{RST}")
+    print()
+    info(f"Share this link with anyone: {url}")
+    info(f"Admin (re-auth if needed): {url}/auth/login?secret={admin_secret}")
+    print()
+
+# ── Local run ─────────────────────────────────────────────────────────────────
+
+def run_local():
+    print()
+
+    # Load .env
+    token_json = json.dumps(json.load(open("token.json")))
+    with open(".env", "w") as f:
+        f.write(f"GOOGLE_TOKEN={token_json}\n")
+        f.write(f"ADMIN_SECRET={os.urandom(8).hex()}\n")
+
+    # Ask about tunnel
+    want_tunnel = ask("Share a public URL via Cloudflare Tunnel? (y/n)", "y")
+    use_tunnel  = want_tunnel.lower().startswith("y")
+
+    if use_tunnel and not cmd_exists("cloudflared"):
+        info("Installing cloudflared...")
+        if platform.system() == "Darwin":
+            run(["brew", "install", "cloudflared"], capture_output=True)
+        else:
+            info("Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
+            use_tunnel = False
+
+    print()
+    info("Starting server...")
+
+    server = subprocess.Popen(
+        [sys.executable, "run.py"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    time.sleep(2)
+
+    if use_tunnel:
+        tunnel = subprocess.Popen(
+            ["cloudflared", "tunnel", "--url", "http://localhost:8080"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        )
+        public_url = None
+        for line in tunnel.stdout:
+            if "trycloudflare.com" in line or ".cloudflare.com" in line:
+                for part in line.split():
+                    if part.startswith("https://"):
+                        public_url = part.strip()
+                        break
+            if public_url:
+                break
+
+        print()
+        print(f"  {BOLD}{GREEN}🎉  Public URL: {public_url}{RST}")
+        print( f"  {DIM}Local:          http://localhost:8080{RST}")
+    else:
+        print()
+        print(f"  {BOLD}{GREEN}🎉  Running at http://localhost:8080{RST}")
+
+    print()
+    info("Press Ctrl+C to stop.")
+    try:
+        server.wait()
+    except KeyboardInterrupt:
+        server.terminate()
+        print("\n  Stopped.\n")
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+def main():
+    print()
+    print(f"  {BOLD}cal-book setup{RST}")
+    print(f"  {DIM}─────────────{RST}")
+
+    creds, profile = do_google_auth()
+    cfg            = do_config(creds, profile)
+
+    with open("token.json") as f:
+        token_data = json.load(f)
+
+    do_host(token_data)
+
+if __name__ == "__main__":
     main()

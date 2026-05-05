@@ -29,9 +29,13 @@ _book_lock = asyncio.Lock()
 # ── Config ────────────────────────────────────────────────────────────────────
 
 def load_config():
-    path = os.environ.get('CONFIG_PATH', 'config.yaml')
-    with open(path) as f:
-        cfg = yaml.safe_load(f)
+    # CONFIG_YAML env var takes precedence (used on Fly.io)
+    raw = os.environ.get('CONFIG_YAML')
+    if raw:
+        cfg = yaml.safe_load(raw)
+    else:
+        with open(os.environ.get('CONFIG_PATH', 'config.yaml')) as f:
+            cfg = yaml.safe_load(f)
     cfg.setdefault('meeting_duration_minutes', 30)
     cfg.setdefault('buffer_minutes', 15)
     cfg.setdefault('lookahead_days', 14)
