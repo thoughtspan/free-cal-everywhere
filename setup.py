@@ -23,10 +23,18 @@ def _ensure_deps():
     try:
         import yaml, google.auth, googleapiclient, google_auth_oauthlib  # noqa
     except ImportError:
+        # Create a venv and install there — avoids system Python restrictions
+        venv_dir = Path(__file__).parent / "venv"
+        if not venv_dir.exists():
+            print("  Creating virtual environment...")
+            subprocess.check_call([sys.executable, "-m", "venv", str(venv_dir)])
+        venv_python = venv_dir / ("Scripts/python.exe" if platform.system() == "Windows"
+                                   else "bin/python")
         print("  Installing dependencies...")
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt"]
-        )
+        subprocess.check_call([str(venv_python), "-m", "pip", "install", "-q",
+                                "-r", "requirements.txt"])
+        # Re-exec with the venv python so imports work
+        os.execv(str(venv_python), [str(venv_python)] + sys.argv)
 
 _ensure_deps()
 
