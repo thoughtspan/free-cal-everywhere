@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -357,9 +358,10 @@ def run_local():
     venv_python = Path(__file__).parent / "venv" / "bin" / "python"
     py = str(venv_python) if venv_python.exists() else sys.executable
 
+    log_file = open("server.log", "w")
     server = subprocess.Popen(
         [py, "run.py"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        stdout=log_file, stderr=log_file
     )
     time.sleep(2)
 
@@ -374,6 +376,10 @@ def run_local():
             if m:
                 public_url = m.group(0)
                 break
+
+        # Drain remaining output so cloudflared doesn't block on a full pipe
+        threading.Thread(target=lambda: [_ for _ in tunnel.stdout],
+                         daemon=True).start()
 
         print()
         print(f"  {BOLD}{GREEN}🎉  Public URL: {public_url}{RST}")
