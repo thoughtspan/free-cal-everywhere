@@ -2,6 +2,8 @@ credentials.json
 token.json
 config.yaml
 bookings.db
+admin-secret.txt
+server.log
 __pycache__/
 *.pyc
 .env

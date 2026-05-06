@@ -30,7 +30,7 @@ _book_lock = asyncio.Lock()
 # ── Config ────────────────────────────────────────────────────────────────────
 
 def load_config():
-    # CONFIG_YAML env var takes precedence (used on Fly.io)
+    # CONFIG_YAML env var takes precedence (set by setup.py on Railway)
     raw = os.environ.get('CONFIG_YAML')
     if raw:
         cfg = yaml.safe_load(raw)
