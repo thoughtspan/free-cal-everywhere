@@ -283,6 +283,10 @@ def deploy_railway(token_data):
         # May already be linked; try linking to existing or continue
         run(["railway", "init"], capture_output=True)
 
+    # Create a service within the project — required before variables can be set
+    info("Creating service...")
+    run(["railway", "add", "--service", "free-cal-everywhere"], capture_output=True, text=True)
+
     # Set environment variables in one call
     admin_secret = os.urandom(12).hex()
     with open("config.yaml") as f:
