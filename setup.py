@@ -233,7 +233,7 @@ def do_config(creds, profile):
 
 # ── Step 3: Host ──────────────────────────────────────────────────────────────
 
-def do_host(token_data):
+def do_host(token_data, cfg):
     hdr("③", "Where do you want to host it?")
     print()
 
@@ -243,13 +243,13 @@ def do_host(token_data):
     ], default=1)
 
     if choice == 1:
-        deploy_railway(token_data)
+        deploy_railway(token_data, cfg)
     else:
         run_local()
 
 # ── Railway deployment ────────────────────────────────────────────────────────
 
-def deploy_railway(token_data):
+def deploy_railway(token_data, cfg):
     print()
 
     # Install Railway CLI if missing
@@ -283,9 +283,13 @@ def deploy_railway(token_data):
         # May already be linked; try linking to existing or continue
         run(["railway", "init"], capture_output=True)
 
+    # Derive a personal service name from the owner's first name
+    first_name   = cfg.get("owner_name", "").split()[0].lower() if cfg.get("owner_name") else ""
+    service_name = f"freecal-booktime-{first_name}" if first_name else "free-cal-everywhere"
+
     # Create a service within the project — required before variables can be set
     info("Creating service...")
-    run(["railway", "add", "--service", "free-cal-everywhere"], capture_output=True, text=True)
+    run(["railway", "add", "--service", service_name], capture_output=True, text=True)
 
     # Set environment variables in one call
     admin_secret = os.urandom(12).hex()
@@ -304,17 +308,30 @@ def deploy_railway(token_data):
     info("Deploying (this takes ~1 minute)...")
     run_or_die(["railway", "up", "--detach"], "Deployment failed — run `railway logs` for details")
 
-    # Get public URL (Railway generates one automatically)
+    # Provision public domain (Railway doesn't create one automatically)
+    info("Provisioning domain...")
     url_result = run(["railway", "domain"], capture_output=True, text=True)
     url = url_result.stdout.strip()
-    if not url.startswith("http"):
-        url = f"https://{url}" if url else "https://your-project.up.railway.app"
+    if not url or not url.startswith("http"):
+        run(["railway", "domain", "create"], capture_output=True, text=True)
+        url_result = run(["railway", "domain"], capture_output=True, text=True)
+        url = url_result.stdout.strip()
+    if url and not url.startswith("http"):
+        url = f"https://{url}"
+    if not url:
+        url = f"https://{service_name}.up.railway.app"
+
+    # Write admin credentials to a local file — keep secret off the terminal
+    admin_url = f"{url}/auth/login?secret={admin_secret}"
+    Path("admin-secret.txt").write_text(
+        f"Booking URL: {url}\nAdmin URL:   {admin_url}\n"
+    )
 
     print()
     print(f"  {BOLD}{GREEN}🎉  Live at {url}{RST}")
     print()
     info(f"Share this link with anyone: {url}")
-    info(f"Admin (re-auth if needed): {url}/auth/login?secret={admin_secret}")
+    info(f"Admin credentials saved to: admin-secret.txt")
     print()
 
 # ── Local run ─────────────────────────────────────────────────────────────────
@@ -398,7 +415,7 @@ def main():
     with open("token.json") as f:
         token_data = json.load(f)
 
-    do_host(token_data)
+    do_host(token_data, cfg)
 
 if __name__ == "__main__":
     main()
