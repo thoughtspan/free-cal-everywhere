@@ -275,13 +275,9 @@ def deploy_railway(token_data, cfg):
     run_or_die(["railway", "login"], "Railway login failed")
     print()
 
-    # Create project
+    # Create and link project — run without capturing so Railway can prompt if needed
     info("Creating Railway project...")
-    result = run(["railway", "init", "--name", "free-cal-everywhere"],
-                 capture_output=True, text=True)
-    if result.returncode != 0:
-        # May already be linked; try linking to existing or continue
-        run(["railway", "init"], capture_output=True)
+    run(["railway", "init", "--name", "free-cal-everywhere"])
 
     # Derive a personal service name from the owner's first name
     first_name   = cfg.get("owner_name", "").split()[0].lower() if cfg.get("owner_name") else ""
